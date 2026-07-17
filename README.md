@@ -3,6 +3,8 @@
 ## An open-source platform for sleep EEG combining automated processing with clinically relevant sleep metrics
 Developed in collaboration with ANT Neuro (https://www.ant-neuro.com/) and built primarily on MNE-Python (Gramfort et al., 2014), this open-source Python Shiny application provides end-to-end analysis of high- and low-density sleep EEG, integrating preprocessing, artefact detection, ICA, sleep staging, event detection, report generation, and visualization of insomnia-related sleep patterns against reference recordings (Goldberger et al., 2000; Terzano et al., 2001) in a user-friendly interface.
 
+Developed as my MSs thesis at Vrije Universiteit Amsterdam within the Erasmus Mundus Joint Master’s Programme in Brain and Data Science (NeuroData).
+
 ## Features
 - Load ANT-Neuro CNT and EDF recordings
 - Assign EEG, EOG, EMG, ECG, respiration, and other channel types
