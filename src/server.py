@@ -197,12 +197,12 @@ def server(input, output, session):
             return
         workflow_busy.set(True)
         update_active_workflow_button(ui, True, "apply_montage", "Applying...")
+        filter_settings = channel_type_filters_scaling_function(working_data.get(), input, input.channel_mode(), input.channels(), app_channel_types.get())
+        saved_filter_settings.set(filter_settings)
+        task_args = (working_data.get(), input.channel_mode(), input.channels(), input.reference(), input.single_channel(), input.avg_channels(), filter_settings, target_resample_sfreq.get(), app_channel_types.get())
 
         def invoke_after_flush():
-            with reactive.isolate():
-                filter_settings = channel_type_filters_scaling_function(working_data.get(), input, input.channel_mode(), input.channels(), app_channel_types.get())
-                saved_filter_settings.set(filter_settings)
-            apply_filters_to_data.invoke(working_data.get(), input.channel_mode(), input.channels(), input.reference(), input.single_channel(), input.avg_channels(), filter_settings, target_resample_sfreq.get(), app_channel_types.get())
+            apply_filters_to_data.invoke(*task_args)
             apply_filters_task_active.set(True)
 
         session.on_flushed(invoke_after_flush, once=True)
@@ -253,11 +253,21 @@ def server(input, output, session):
         if workflow_busy.get():
             return
         req(working_data.get())
+        if input.reference() == "Recorded":
+            ui.notification_show(
+                "No rereference selected. Please select a reference other than 'Recorded'.",
+                type="error",
+                duration=5000
+            )
+            return
+        update_active_workflow_button(ui, True, "rereferencing", "Re-referencing...")
         workflow_busy.set(True)
         rereferencing_task_active.set(True)
-        update_active_workflow_button(ui, True, "rereferencing", "Re-referencing...")
+        task_args = (working_data.get(), input.reference(), input.single_channel(), input.avg_channels())
+
         def invoke_after_flush():
-            apply_rereference_to_data.invoke(working_data.get(), input.reference(), input.single_channel(), input.avg_channels())
+            apply_rereference_to_data.invoke(*task_args)
+        
         session.on_flushed(invoke_after_flush, once=True)
 
     @reactive.Effect
@@ -309,7 +319,7 @@ def server(input, output, session):
             original_duration = original.times[-1]
             current_duration = current.times[-1]
             duration_tolerance = 1 / max(original.info["sfreq"], current.info["sfreq"])
-            if original.n_times != current.n_times or abs(original_duration - current_duration) > duration_tolerance:
+            if abs(original_duration - current_duration) > duration_tolerance:
                 ui.notification_show(
                     "Warning: the current data length is no longer the same as the loaded-state data. "
                     "Keeping bad segment annotations may place them at the wrong time points.",
