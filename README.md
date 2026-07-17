@@ -18,7 +18,7 @@ Developed in collaboration with ANT Neuro (https://www.ant-neuro.com/) and built
 - Generate sleep reports and CSV exports
 - Visualize insomnia-related metrics using UMAP: sleep-onset latency, sleep-onset latency to five minutes of sleep, sleep efficiency, wake after sleep onset, overall and stage-specific bandpower.
 
-## Overview of the custom platform structure, workflow, interactions and outputs
+## Overview of the custom platform structure, workflow and interactions
 ![Application's overview](images/application_overview.png)
 
 ## Main panel preview
