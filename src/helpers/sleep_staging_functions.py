@@ -35,7 +35,7 @@ def choosing_sleep_staging(data, channel_names, channel_types, ui):
     )
 
 # Compute sleep staging and related metrics
-def run_sleep_staging_analysis(data, eeg_channels, eog_channel=None, emg_channel=None, metrics=None, visual_channels=None):
+def run_sleep_staging_analysis(data, eeg_channels, eog_channel=None, emg_channel=None, metrics=None, visual_channels=None, bandpower_data=None):
     req(data)
     eeg_channels, metrics, visual_channels = [
         [] if chn is None or chn == "" else [chn] if isinstance(chn, str) else list(chn)
@@ -67,7 +67,7 @@ def run_sleep_staging_analysis(data, eeg_channels, eog_channel=None, emg_channel
     slow_waves = None
     if "slow_waves" in metrics and hypnogram_has_stages(event_hypnogram, ["N2", "N3"]):
         slow_waves = yasa.sw_detect(event_data, hypno=event_hypnogram, include=["N2", "N3"])
-    return {
+    result = {
         "staging": staging,
         "spindles": spindles,
         "spindles_summary": None if spindles is None else spindles.summary(),
@@ -75,6 +75,19 @@ def run_sleep_staging_analysis(data, eeg_channels, eog_channel=None, emg_channel
         "slow_waves_summary": None if slow_waves is None else slow_waves.summary(),
         "visual_channels": visual_channels,
     }
+    bandpower_source = analysis_data if bandpower_data is None else bandpower_data
+    bandpower_tables = {
+        channel: _calculate_bandpower_table(bandpower_source, result, channel)
+        for channel in staging
+    }
+    if len(staging) > 1:
+        bandpower_tables["Average"] = _calculate_bandpower_table(
+            bandpower_source,
+            result,
+            "Average",
+        )
+    result["bandpower_tables"] = bandpower_tables
+    return result
 
 # Create the available choices and default
 def sleep_display_choices(result):
@@ -82,16 +95,6 @@ def sleep_display_choices(result):
     if len(eeg_channels) > 1:
         return ["Average"] + eeg_channels, "Average"
     return eeg_channels, eeg_channels[0]
-
-# Validate and return the user’s current selection
-def current_sleep_display_channel(result, input):
-    req(result)
-    choices, default = sleep_display_choices(result)
-    try:
-        selected = input.sleep_view_channel()
-    except Exception:
-        selected = default
-    return selected if selected in choices else default
 
 # Average sleep-stage probabilities across EEG channels
 def average_sleep_hypnogram(result):
@@ -515,7 +518,7 @@ def _format_bandpower_stage_table(table):
     return table[["Stage"] + numeric_cols]
 
 # Calculate overall and stage-specific bandpower
-def bandpower_table(data, result, selected_channel):
+def _calculate_bandpower_table(data, result, selected_channel):
     if data is None or result is None:
         return None
     channels = list(result["staging"].keys()) if selected_channel == "Average" else [selected_channel]
@@ -540,6 +543,13 @@ def bandpower_table(data, result, selected_channel):
     if overall is not None and by_stage is not None:
         return _format_bandpower_stage_table(pd.concat([overall, by_stage], ignore_index=True))
     return _format_bandpower_stage_table(overall if overall is not None else by_stage)
+
+# Return bandpower calculated and stored during sleep analysis
+def bandpower_table(result, selected_channel):
+    if result is None:
+        return None
+    table = result.get("bandpower_tables", {}).get(selected_channel)
+    return None if table is None else table.copy()
 
 # Get the hypnogram for the selected channel view
 def _selected_hypnogram(result, selected_channel):
@@ -757,11 +767,7 @@ def build_sleep_report_html(data, result, selected_channel, channel_types, filte
             selected_channel,
         )
     )
-    bandpower = bandpower_table(
-        data,
-        result,
-        selected_channel,
-    )
+    bandpower = bandpower_table(result, selected_channel)
     if bandpower is not None:
         bandpower = round_display_table(
             bandpower.drop(

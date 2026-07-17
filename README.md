@@ -16,7 +16,7 @@ Developed in collaboration with ANT Neuro (https://www.ant-neuro.com/) and built
 - Detect sleep spindles and slow waves using YASA (Vallat & Walker, 2021)
 - Calculate sleep statistics and spectral bandpower
 - Generate sleep reports and CSV exports
-- Visualize insomnia-related metrics using UMAP: sleep-onset latency, sleep-onset latency to five minutes of sleep, sleep efficiency, wake after sleep onset, overall and stage-specific bandpower.
+- Visualize insomnia-related metrics using UMAP: sleep-onset latency, sleep efficiency, wake after sleep onset, overall and stage-specific bandpower.
 
 ## Overview of the custom platform structure, workflow and interactions
 ![Application's overview](images/application_overview.png)
@@ -61,3 +61,6 @@ Start the application:
 python -m shiny run src\main.py
 ```
 Open the local address printed in the terminal.
+
+## Computer specifications
+Using an Intel I9-14900KF processor with 64 GB of RAM, processing a 64-channel 7/8-hour recording sampled at 500 Hz through the complete analysis pipeline takes approximately 20-25 minutes. Running 24-channels of the same recording on a 13th Gen Intel® Core™ i5-1340P processor with 16 GB of RAM requires the same time.  Based on these tests, a system with at least 16 GB of RAM can run the pipeline, although 64 GB is recommended for processing high-density full-night recordings more efficiently. Because Shiny sessions may occasionally lose their connection, users are advised to save intermediate outputs using the export button after each major processing step.

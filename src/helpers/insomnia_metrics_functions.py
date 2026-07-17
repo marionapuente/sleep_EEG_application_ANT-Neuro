@@ -4,12 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from helpers.sleep_staging_functions import bandpower_table, selected_sleep_statistics, sleep_statistics_values
-
-DFA_FREQUENCY_RANGE = (1.0, 45.0)
-DFA_WINDOW_SECONDS = 300.0
-DFA_RUNTIME = "c"
-DFA_FALLBACK_RUNTIME = "python"
 TOP20_INSOMNIA_FEATURES = [
     "SE",
     "WASO",
@@ -33,187 +27,62 @@ TOP20_INSOMNIA_FEATURES = [
     "BANDPOWER_N1_TOTALABSPOW",
 ]
 
-# Load the optional crosci DFA functions
-def _crosci_functions():
-    try:
-        from crosci.biomarkers import compute_spectrum_biomarkers, get_frequency_bins
-    except ImportError as error:
-        print(f"Could not import crosci DFA functions: {error}")
-        return None, None
-    return compute_spectrum_biomarkers, get_frequency_bins
+# Extract the selected insomnia features for one staged channel
+def _insomnia_features_for_channel(result, selected_channel):
+    stats_values = result["staging"][selected_channel]["sleep_statistics"]
+    if isinstance(stats_values, pd.Series):
+        stats_values = stats_values.to_dict()
+    elif isinstance(stats_values, pd.DataFrame):
+        stats_values = {} if stats_values.empty else stats_values.iloc[0].to_dict()
+    elif not isinstance(stats_values, dict):
+        stats_values = dict(stats_values)
 
-# Extract a centered window of the requested duration
-def _middle_window(data, duration_seconds):
-    sfreq = data.info["sfreq"]
-    total_seconds = data.n_times / sfreq
-    if total_seconds <= duration_seconds:
-        return data.copy()
-    tmin = (total_seconds - duration_seconds) / 2
-    tmax = tmin + duration_seconds
-    return data.copy().crop(tmin=tmin, tmax=tmax, include_tmax=False)
-
-# Limit the DFA frequency range to valid sampled frequencies
-def _dfa_frequency_range(sfreq):
-    lower, upper = DFA_FREQUENCY_RANGE
-    upper = min(upper, sfreq / 2 - 0.1)
-    if upper <= lower:
-        return None
-    return [lower, upper]
-
-# Convert the sampling frequency to the integer crosci requires
-def _crosci_sampling_frequency(sfreq):
-    rounded = int(round(sfreq))
-    if not np.isclose(sfreq, rounded):
-        raise ValueError(f"crosci requires an integer sampling frequency, got {sfreq} Hz.")
-    return rounded
-
-# Create a column label for a DFA frequency band
-def _dfa_band_label(frequency_range):
-    labels = []
-    for frequency in frequency_range:
-        rounded = f"{frequency:.2f}".rstrip("0").rstrip(".")
-        labels.append(rounded.replace(".", "_"))
-    return f"{labels[0]}_{labels[1]}HZ"
-
-# Calculate DFA values for one channel
-def dfa_table(data, result, selected_channel):
-    if data is None or result is None:
-        print("Skipping DFA: data or sleep staging result is missing.")
-        return None
-    compute_spectrum_biomarkers, get_frequency_bins = _crosci_functions()
-    if compute_spectrum_biomarkers is None:
-        print("Skipping DFA: crosci is not available.")
-        return None
-    channels = [selected_channel]
-    channels = [channel for channel in channels if channel in data.ch_names]
-    if not channels:
-        print(f"Skipping DFA for {selected_channel}: channel is not present in the data.")
-        return None
-    analysis_data = _middle_window(data.copy().pick(channels), DFA_WINDOW_SECONDS)
-    sfreq = analysis_data.info["sfreq"]
-    try:
-        crosci_sfreq = _crosci_sampling_frequency(sfreq)
-    except ValueError as error:
-        print(f"Skipping DFA for {selected_channel}: {error}")
-        return None
-    frequency_range = _dfa_frequency_range(sfreq)
-    if frequency_range is None:
-        print(f"Skipping DFA for {selected_channel}: sampling frequency {sfreq} Hz is too low for range {DFA_FREQUENCY_RANGE}.")
-        return None
-    signal_matrix = analysis_data.get_data()
-    if signal_matrix.size == 0:
-        print(f"Skipping DFA for {selected_channel}: selected signal is empty.")
-        return None
-
-    biomarkers = None
-    for runtime in [DFA_RUNTIME, DFA_FALLBACK_RUNTIME]:
-        try:
-            print(f"Computing DFA for {selected_channel} using crosci runtime='{runtime}' over middle {DFA_WINDOW_SECONDS:.0f}s.")
-            biomarkers = compute_spectrum_biomarkers(
-                signal_matrix,
-                crosci_sfreq,
-                frequency_range,
-                runtime=runtime,
-                biomarkers_to_compute=["DFA"],
-            )
-            break
-        except Exception as error:
-            print(f"DFA failed for {selected_channel} with crosci runtime='{runtime}': {error}")
-            continue
-    if biomarkers is None:
-        print(f"Skipping DFA for {selected_channel}: all crosci runtimes failed.")
-        return None
-    dfa_matrix = np.asarray(biomarkers.get("DFA"), dtype=float)
-    if dfa_matrix.ndim != 2 or dfa_matrix.size == 0:
-        print(f"Skipping DFA for {selected_channel}: crosci returned an empty or invalid DFA matrix.")
-        return None
-    frequency_bins = get_frequency_bins(frequency_range)
-    if len(frequency_bins) != dfa_matrix.shape[1]:
-        print(f"DFA bin count mismatch for {selected_channel}: {len(frequency_bins)} bins, matrix has {dfa_matrix.shape[1]} columns.")
-        frequency_bins = frequency_bins[:dfa_matrix.shape[1]]
-    row = {"Stage": "Overall"}
-    for idx, frequency_bin in enumerate(frequency_bins):
-        values = dfa_matrix[:, idx]
-        row[_dfa_band_label(frequency_bin)] = np.nanmean(values) if np.isfinite(values).any() else np.nan
-
-    return pd.DataFrame([row])
-
-# Combine sleep, bandpower, and DFA metrics for one channel
-def insomnia_metrics_table(data, result, selected_channel):
-    table = bandpower_table(data, result, selected_channel)
-    dfa = dfa_table(data, result, selected_channel)
-    stats_values = sleep_statistics_values(selected_sleep_statistics(result, selected_channel))
     metrics = {
         "SOL": stats_values.get("SOL"),
-        "SOL_5MIN": stats_values.get("SOL_5MIN"),
         "WASO": stats_values.get("WASO"),
         "SE": stats_values.get("SE"),
     }
+    table = result.get("bandpower_tables", {}).get(selected_channel)
     if table is not None:
         table = table.copy()
         if table.index.names and any(name is not None for name in table.index.names):
             table = table.reset_index()
         if "Stage" in table.columns:
             table["Stage"] = table["Stage"].replace({0: "WAKE", 1: "N1", 2: "N2", 3: "N3", 4: "REM"})
-        skip_cols = {"Chan", "Channel", "Stage", "FreqRes", "Relative"}
-        band_cols = [col for col in table.select_dtypes(include="number").columns if col not in skip_cols]
-        if "Stage" in table.columns:
+            skip_cols = {"Chan", "Channel", "Stage", "FreqRes", "Relative"}
+            band_cols = [col for col in table.select_dtypes(include="number").columns if col not in skip_cols]
             for _, row in table.iterrows():
                 stage = str(row["Stage"]).upper()
                 for band in band_cols:
-                    metrics[f"BANDPOWER_{stage}_{str(band).upper()}"] = row[band]
-    if dfa is not None:
-        dfa = dfa.copy()
-        if dfa.index.names and any(name is not None for name in dfa.index.names):
-            dfa = dfa.reset_index()
-        if "Stage" in dfa.columns:
-            for _, row in dfa.iterrows():
-                stage = str(row["Stage"]).upper()
-                for band in [col for col in dfa.columns if col != "Stage"]:
-                    if band in row:
-                        metrics[f"DFA_{stage}_{band}"] = row[band]
-    return pd.DataFrame([metrics])
+                    feature = (f"BANDPOWER_{stage}_{str(band).upper()}")
+                    if feature in TOP20_INSOMNIA_FEATURES:
+                        metrics[feature] = row[band]
+    return {
+        feature: metrics.get(feature)
+        for feature in TOP20_INSOMNIA_FEATURES
+    }
 
-# Build insomnia metrics for all staged channels and their average
-def make_insomnia_metrics_table(data, result):
-    if data is None or result is None:
-        print("Skipping insomnia metrics export: data or sleep staging result is missing.")
+# Build the averaged top-20 feature table used by the insomnia visualization
+def build_top20_insomnia_table(result):
+    if result is None:
+        print("Skipping insomnia metrics: sleep staging result is missing.")
         return None
-    channels = [channel for channel in result["staging"].keys() if channel in data.ch_names]
+    channels = list(result.get("staging", {}))
     if not channels:
-        print("Skipping insomnia metrics export: no sleep-staged channels are present in the data.")
+        print("Skipping insomnia metrics: no sleep-staged channels are available.")
         return None
-    rows = []
-    for channel in channels:
-        table = insomnia_metrics_table(data, result, channel)
-        if table is None or table.empty:
-            continue
-        row = table.iloc[0].to_dict()
-        row = {"Channel": channel, **row}
-        rows.append(row)
-    if not rows:
-        return None
-    table = pd.DataFrame(rows)
-    numeric_cols = table.select_dtypes(include="number").columns
-    average_row = {column: np.nan for column in table.columns}
-    average_row["Channel"] = "Average"
-    for column in numeric_cols:
-        average_row[column] = table[column].mean(skipna=True)
-    return pd.concat([pd.DataFrame([average_row]), table], ignore_index=True)
 
-# Select the 20 features used by the insomnia UMAP
-def top20_insomnia_metrics_table(table):
-    if table is None:
-        return None
-    table = table.copy()
-    if "Channel" in table.columns and (table["Channel"] == "Average").any():
-        table = table[table["Channel"] == "Average"].head(1)
-    else:
-        table = table.head(1)
+    channel_table = pd.DataFrame([
+        _insomnia_features_for_channel(result, channel)
+        for channel in channels
+    ])
+    average_row = {"Channel": "Average"}
     for feature in TOP20_INSOMNIA_FEATURES:
-        if feature not in table.columns:
-            table[feature] = pd.NA
-    return table[["Channel", *TOP20_INSOMNIA_FEATURES]]
+        average_row[feature] = pd.to_numeric(
+            channel_table[feature],
+            errors="coerce",
+        ).mean(skipna=True)
+    return pd.DataFrame([average_row], columns=["Channel", *TOP20_INSOMNIA_FEATURES])
 
 # List unavailable values among the 20 UMAP features
 def missing_insomnia_features(table):

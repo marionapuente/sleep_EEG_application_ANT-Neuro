@@ -3,7 +3,6 @@ import asyncio
 import io
 import os
 import zipfile
-import pandas as pd
 from shiny import ui, reactive, render, req
 
 from helpers.data_management import apply_montage_selection, export_data, finish_reset, has_montage, set_and_describe_channels, status_and_load, update_active_workflow_button, update_channel_type_choices, channel_type_selection_ui
@@ -11,8 +10,8 @@ from helpers.time_series_display import show_ts_plot, channel_type_filters_scali
 from helpers.filtering_functions import apply_rereference, channel_type_filters_scaling_function, get_channel_groups, prepare_filtered_data
 from helpers.bad_detection_functions import BadSegmentReview, find_bad_channels, prepare_data_for_detection, annotate_bad_segments, get_bad_annotation_segments, get_bad_segment_windows, get_list_bad_segments, bad_segment_panel_ui, save_bad_segment_selection, bad_channel_criteria_table, bad_channel_handling_display, apply_bad_channel_actions, replace_bad_annotations, delete_segments_from_data, keep_bad_annotations, keep_non_bad_annotations, bad_channel_panel_content_ui
 from helpers.ica_functions import get_components_to_remove, height_ica_plot, labelling_ica, parse_and_validate_components, plot_ica, prepare_data_and_fit_ica
-from helpers.sleep_staging_functions import choosing_sleep_staging, run_sleep_staging_analysis, sleep_display_choices, current_sleep_display_channel, empty_sleep_plot, plot_sleep_staging_summary, plot_selected_sensors_by_stage, plot_psd_by_stage, plot_spindle_average, plot_slow_wave_average, sleep_epoch_probability_table as make_sleep_epoch_probability_table, sleep_statistics_table as make_sleep_statistics_table, spindles_table as make_spindles_table, slow_waves_table as make_slow_waves_table, bandpower_table as make_bandpower_table, build_sleep_report_html, channel_first_table, round_display_table, safe_zip_folder_name, table_to_csv
-from helpers.insomnia_metrics_functions import make_insomnia_metrics_table, insomnia_umap_metrics_download_table, missing_insomnia_features, top20_insomnia_metrics_table, plot_insomnia_umap
+from helpers.sleep_staging_functions import choosing_sleep_staging, run_sleep_staging_analysis, sleep_display_choices, empty_sleep_plot, plot_sleep_staging_summary, plot_selected_sensors_by_stage, plot_psd_by_stage, plot_spindle_average, plot_slow_wave_average, sleep_epoch_probability_table as make_sleep_epoch_probability_table, sleep_statistics_table as make_sleep_statistics_table, spindles_table as make_spindles_table, slow_waves_table as make_slow_waves_table, bandpower_table as make_bandpower_table, build_sleep_report_html, channel_first_table, round_display_table, safe_zip_folder_name, table_to_csv
+from helpers.insomnia_metrics_functions import build_top20_insomnia_table, insomnia_umap_metrics_download_table, missing_insomnia_features, plot_insomnia_umap
 
 # Server
 def server(input, output, session):
@@ -103,18 +102,26 @@ def server(input, output, session):
     @reactive.extended_task
     async def compute_sleep_staging(data, resample_sfreq, eeg_channels, eog_channel, emg_channel, metrics, visual_channels):
         def prepare_and_compute():
-            return run_sleep_staging_analysis(prepare_data_for_detection(data, resample_sfreq), eeg_channels, eog_channel, emg_channel, metrics, visual_channels)
+            result = run_sleep_staging_analysis(
+                prepare_data_for_detection(data, resample_sfreq),
+                eeg_channels,
+                eog_channel,
+                emg_channel,
+                metrics,
+                visual_channels,
+                bandpower_data=data,
+            )
+            result["insomnia_top20_table"] = build_top20_insomnia_table(result)
+            return result
         return await asyncio.to_thread(prepare_and_compute)
 
     @reactive.extended_task
-    async def compute_insomnia_umap(data, result, user_label):
+    async def compute_insomnia_umap(top20_table, user_label):
         def prepare_and_plot():
-            table = top20_insomnia_metrics_table(
-                round_display_table(make_insomnia_metrics_table(data, result))
-            )
             return {
-                "figure": plot_insomnia_umap(table, user_label=user_label),
-                "missing_features": missing_insomnia_features(table),
+                "top20_table": top20_table,
+                "figure": plot_insomnia_umap(top20_table, user_label=user_label),
+                "missing_features": missing_insomnia_features(top20_table),
             }
         return await asyncio.to_thread(prepare_and_plot)
 
@@ -937,6 +944,15 @@ def server(input, output, session):
             ui.update_action_button("run_sleep_staging", label="Running sleep staging...", disabled=True)
             reactive.invalidate_later(15)
 
+    @reactive.Calc
+    def selected_sleep_channel():
+        result = req(sleep_staging_result.get())
+        choices, default = sleep_display_choices(result)
+        if len(choices) == 1:
+            return default
+        selected = req(input.sleep_view_channel())
+        return selected if selected in choices else default
+
     @output
     @render.ui
     def sleep_staging_view_controls():
@@ -950,7 +966,7 @@ def server(input, output, session):
     def sleep_staging_summary_plot():
         data = req(working_data.get())
         result = req(sleep_staging_result.get())
-        return plot_sleep_staging_summary(data, result, current_sleep_display_channel(result, input))
+        return plot_sleep_staging_summary(data, result, selected_sleep_channel())
 
     @output
     @render.ui
@@ -965,7 +981,7 @@ def server(input, output, session):
 
     @render.plot
     def sleep_visual_channels_stage_table():
-        fig = plot_selected_sensors_by_stage(working_data.get(), sleep_staging_result.get(), current_sleep_display_channel(sleep_staging_result.get(), input), app_channel_types.get(), saved_filter_settings.get())
+        fig = plot_selected_sensors_by_stage(working_data.get(), sleep_staging_result.get(), selected_sleep_channel(), app_channel_types.get(), saved_filter_settings.get())
         req(fig is not None)
         return fig
 
@@ -973,20 +989,19 @@ def server(input, output, session):
     def download_sleep_report():
         data = req(working_data.get())
         result = req(sleep_staging_result.get())
-        selected_channel = current_sleep_display_channel(result, input)
+        selected_channel = selected_sleep_channel()
         yield build_sleep_report_html(data=data, result=result, selected_channel=selected_channel, channel_types=app_channel_types.get(), filter_settings=saved_filter_settings.get())
 
     @render.download(filename="sleep_tables_csv.zip")
     def download_sleep_results_csvs():
-        data = req(working_data.get())
         result = req(sleep_staging_result.get())
-        selected_channel = current_sleep_display_channel(result, input)
+        selected_channel = selected_sleep_channel()
         archive = io.BytesIO()
         tables = {
             "sleep_epoch_probabilities.csv": round_display_table(make_sleep_epoch_probability_table(result, selected_channel)),
             "sleep_statistics.csv": round_display_table(make_sleep_statistics_table(result, selected_channel)),
         }
-        bandpower = make_bandpower_table(data, result, selected_channel)
+        bandpower = make_bandpower_table(result, selected_channel)
         if bandpower is not None:
             tables["bandpower.csv"] = round_display_table(bandpower.drop(columns=["FreqRes", "Relative"], errors="ignore"))
         spindles = make_spindles_table(result, selected_channel)
@@ -1004,14 +1019,13 @@ def server(input, output, session):
     @render.data_frame
     def sleep_statistics_table():
         result = req(sleep_staging_result.get())
-        table = make_sleep_statistics_table(result, current_sleep_display_channel(result, input))
+        table = make_sleep_statistics_table(result, selected_sleep_channel())
         return round_display_table(table)
 
     @render.data_frame
     def sleep_bandpower_table():
-        data = req(working_data.get())
         result = req(sleep_staging_result.get())
-        table = make_bandpower_table(data, result, current_sleep_display_channel(result, input))
+        table = make_bandpower_table(result, selected_sleep_channel())
         req(table is not None)
         table = table.drop(columns=["FreqRes", "Relative"], errors="ignore")
         return round_display_table(table)
@@ -1020,14 +1034,14 @@ def server(input, output, session):
     def sleep_bandpower_plot():
         data = req(working_data.get())
         result = req(sleep_staging_result.get())
-        fig = plot_psd_by_stage(data, result, current_sleep_display_channel(result, input))
+        fig = plot_psd_by_stage(data, result, selected_sleep_channel())
         req(fig is not None)
         return fig
 
     @render.data_frame
     def sleep_spindles_table():
         result = req(sleep_staging_result.get())
-        selected_channel = current_sleep_display_channel(result, input)
+        selected_channel = selected_sleep_channel()
         table = make_spindles_table(result, selected_channel)
         req(table is not None)
         return channel_first_table(round_display_table(table))
@@ -1035,7 +1049,7 @@ def server(input, output, session):
     @render.text
     def sleep_spindles_count():
         result = req(sleep_staging_result.get())
-        table = make_spindles_table(result, current_sleep_display_channel(result, input))
+        table = make_spindles_table(result, selected_sleep_channel())
         req(table is not None)
         count = len(table)
         return f"{count} spindle{'s' if count != 1 else ''} detected."
@@ -1056,7 +1070,7 @@ def server(input, output, session):
     @render.plot
     def sleep_spindle_average_plot():
         result = req(sleep_staging_result.get())
-        fig = plot_spindle_average(result, current_sleep_display_channel(result, input))
+        fig = plot_spindle_average(result, selected_sleep_channel())
         if fig is None:
             return empty_sleep_plot("Average spindle waveform could not be plotted for the current selection.")
         return fig
@@ -1064,7 +1078,7 @@ def server(input, output, session):
     @render.data_frame
     def sleep_slow_waves_table():
         result = req(sleep_staging_result.get())
-        selected_channel = current_sleep_display_channel(result, input)
+        selected_channel = selected_sleep_channel()
         table = make_slow_waves_table(result, selected_channel)
         req(table is not None)
         return channel_first_table(round_display_table(table))
@@ -1072,7 +1086,7 @@ def server(input, output, session):
     @render.text
     def sleep_slow_waves_count():
         result = req(sleep_staging_result.get())
-        table = make_slow_waves_table(result, current_sleep_display_channel(result, input))
+        table = make_slow_waves_table(result, selected_sleep_channel())
         req(table is not None)
         count = len(table)
         return f"{count} slow wave{'s' if count != 1 else ''} detected."
@@ -1093,32 +1107,23 @@ def server(input, output, session):
     def sleep_slow_wave_average_plot():
         result = sleep_staging_result.get()
         req(result)
-        fig = plot_slow_wave_average(result, current_sleep_display_channel(result, input))
+        fig = plot_slow_wave_average(result, selected_sleep_channel())
         if fig is None:
             return empty_sleep_plot("Average slow wave waveform could not be plotted for the current selection.")
         return fig
     
     ### INSOMNIA METRICS SECTION ###
 
-    @render.download(filename="insomnia_channel_metrics.csv")
-    def download_insomnia_metrics():
-        data = req(working_data.get())
-        result = req(sleep_staging_result.get())
-        table = round_display_table(make_insomnia_metrics_table(data, result))
-        table = top20_insomnia_metrics_table(table)
-        if table is None:
-            table = pd.DataFrame([{"Status": "No data available"}])
-        yield table_to_csv(table)
-
     @reactive.Effect
     @reactive.event(input.show_insomnia_umap)
     def _():
         if workflow_busy.get():
             return
-        data = working_data.get()
         result = sleep_staging_result.get()
-        req(data)
         req(result)
+        top20_table = result.get("insomnia_top20_table")
+        req(top20_table is not None)
+        req(not top20_table.empty)
         if compute_insomnia_umap.status() == "running":
             ui.notification_show("Insomnia UMAP is already being calculated.", type="message", duration=3000)
             return
@@ -1128,7 +1133,7 @@ def server(input, output, session):
         user_label = loaded_file_name.get()
 
         def invoke_after_flush():
-            compute_insomnia_umap.invoke(data, result, user_label)
+            compute_insomnia_umap.invoke(top20_table, user_label)
 
         session.on_flushed(invoke_after_flush, once=True)
 
@@ -1185,7 +1190,6 @@ def server(input, output, session):
     @render.download(filename="insomnia_umap.png")
     def download_insomnia_umap_png():
         req(compute_insomnia_umap.status() == "success")
-        table = top20_insomnia_metrics_table(round_display_table(make_insomnia_metrics_table(working_data.get(), sleep_staging_result.get())))
         fig = compute_insomnia_umap.result()["figure"]
         buffer = io.BytesIO()
         fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
@@ -1193,6 +1197,7 @@ def server(input, output, session):
 
     @render.download(filename="insomnia_umap_metrics.csv")
     def download_insomnia_umap_metrics():
-        table = top20_insomnia_metrics_table(round_display_table(make_insomnia_metrics_table(working_data.get(), sleep_staging_result.get())))
-        download_table = insomnia_umap_metrics_download_table(table, user_label=loaded_file_name.get())
+        req(compute_insomnia_umap.status() == "success")
+        top20_table = compute_insomnia_umap.result()["top20_table"]
+        download_table = insomnia_umap_metrics_download_table(top20_table, user_label=loaded_file_name.get())
         yield table_to_csv(download_table)
