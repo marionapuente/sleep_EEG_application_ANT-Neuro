@@ -353,6 +353,8 @@ def plot_selected_sensors_by_stage(data, result, selected_channel, app_channel_t
     app_channel_types = app_channel_types or {}
     filter_settings = filter_settings or {}
     mne_types = dict(zip(data.ch_names, data.get_channel_types()))
+    signals = data.get_data(picks=visual_channels) * 1e6
+    signals_by_channel = dict(zip(visual_channels, signals))
 
     for row_idx, channel in enumerate(visual_channels, start=1):
         axes[row_idx, 0].text(0.5, 0.5, channel, ha="center", va="center")
@@ -360,7 +362,7 @@ def plot_selected_sensors_by_stage(data, result, selected_channel, app_channel_t
         scaling = filter_settings.get(channel_group, {}).get("scaling")
         if scaling is None:
             scaling = 200000 if channel_group == "body_position" else 40 if channel_group == "eeg" else 400 if channel_group == "ecg" else 100
-        signal = data.copy().pick([channel]).get_data()[0] * 1e6
+        signal = signals_by_channel[channel]
         for col_idx, stage in enumerate(stage_order, start=1):
             epoch_idx = first_epoch_by_stage[stage]
             start = int(round(epoch_idx * 30 * sfreq))
@@ -639,12 +641,11 @@ def plot_spindle_average(result, selected_channel):
     if selected_channel == "Average":
         return _plot_average_event(result["spindles"], "Average spindle", "Peak", 1, 1, show_std=False)
     mask = None
-    if selected_channel != "Average":
-        summary = result["spindles"].summary()
-        if "Channel" in summary.columns:
-            mask = summary["Channel"] == selected_channel
-            if not mask.any():
-                return None
+    summary = result["spindles"].summary()
+    if "Channel" in summary.columns:
+        mask = summary["Channel"] == selected_channel
+        if not mask.any():
+            return None
     return _plot_average_event(result["spindles"], "Average spindle", "Peak", 1, 1, mask=mask, show_std=True)
 
 # Plot the average detected slow-wave waveform
@@ -654,12 +655,11 @@ def plot_slow_wave_average(result, selected_channel):
     if selected_channel == "Average":
         return _plot_average_event(result["slow_waves"], "Average SW", "NegPeak", 0.4, 0.8, show_std=False, symmetric_xlim=False)
     mask = None
-    if selected_channel != "Average":
-        summary = result["slow_waves"].summary()
-        if "Channel" in summary.columns:
-            mask = summary["Channel"] == selected_channel
-            if not mask.any():
-                return None
+    summary = result["slow_waves"].summary()
+    if "Channel" in summary.columns:
+        mask = summary["Channel"] == selected_channel
+        if not mask.any():
+            return None
     return _plot_average_event(result["slow_waves"], "Average SW", "NegPeak", 0.4, 0.8, mask=mask, show_std=True, symmetric_xlim=False)
 
 # Round numeric columns for display and export
@@ -696,13 +696,12 @@ def fig_to_html(fig):
     if fig is None:
         return ""
     buffer = io.BytesIO()
-    fig.savefig(
-        buffer,
-        format="png",
-        dpi=140,
-        bbox_inches="tight",
-    )
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    try:
+        fig.savefig(buffer, format="png", dpi=140, bbox_inches="tight")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    finally:
+        plt.close(fig)
+        buffer.close()
     return (
         f'<img src="data:image/png;base64,{encoded}" '
         f'alt="" />'

@@ -40,7 +40,7 @@ Vallat, R., & Walker, M. P. (2021). An open-source, high-performance tool for au
 
 Clone the repository:
 ```powershell
-git clone <repository-url>
+git clone https://github.com/marionapuente/sleep_EEG_application_ANT-Neuro.git
 cd sleep_EEG_application_ANT-Neuro
 ```
 

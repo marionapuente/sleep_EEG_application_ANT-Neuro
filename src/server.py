@@ -39,17 +39,13 @@ def server(input, output, session):
     bad_segment_delete_pending = reactive.Value(None)
     bad_window_idx = reactive.Value(0)
     segments_to_keep_bad = reactive.Value({})
-    bad_segment_review = BadSegmentReview(
-        working_data,
-        bad_segment_result,
-        bad_window_idx,
-        segments_to_keep_bad,
-    )
+    bad_segment_review = BadSegmentReview(working_data, bad_segment_result, bad_window_idx, segments_to_keep_bad)
     rereferencing_task_active = reactive.Value(False)
     rereferencing_applied = reactive.Value(False)
     ica_task_active = reactive.Value(False)
     ica_label_task_active = reactive.Value(False)
     ica_result = reactive.Value(None)
+    sleep_staging_task_active = reactive.Value(False)
     sleep_staging_result = reactive.Value(None)
     insomnia_umap_task_active = reactive.Value(False)
 
@@ -206,13 +202,8 @@ def server(input, output, session):
         update_active_workflow_button(ui, True, "apply_montage", "Applying...")
         filter_settings = channel_type_filters_scaling_function(working_data.get(), input, input.channel_mode(), input.channels(), app_channel_types.get())
         saved_filter_settings.set(filter_settings)
-        task_args = (working_data.get(), input.channel_mode(), input.channels(), input.reference(), input.single_channel(), input.avg_channels(), filter_settings, target_resample_sfreq.get(), app_channel_types.get())
-
-        def invoke_after_flush():
-            apply_filters_to_data.invoke(*task_args)
-            apply_filters_task_active.set(True)
-
-        session.on_flushed(invoke_after_flush, once=True)
+        apply_filters_to_data.invoke(working_data.get(), input.channel_mode(), input.channels(), input.reference(), input.single_channel(), input.avg_channels(), filter_settings, target_resample_sfreq.get(), app_channel_types.get())
+        apply_filters_task_active.set(True)
 
     @reactive.Effect
     def _():
@@ -261,21 +252,12 @@ def server(input, output, session):
             return
         req(working_data.get())
         if input.reference() == "Recorded":
-            ui.notification_show(
-                "No rereference selected. Please select a reference other than 'Recorded'.",
-                type="error",
-                duration=5000
-            )
+            ui.notification_show("No rereference selected. Please select a reference other than 'Recorded'.", type="error", duration=5000)
             return
         update_active_workflow_button(ui, True, "rereferencing", "Re-referencing...")
         workflow_busy.set(True)
-        rereferencing_task_active.set(True)
-        task_args = (working_data.get(), input.reference(), input.single_channel(), input.avg_channels())
-
-        def invoke_after_flush():
-            apply_rereference_to_data.invoke(*task_args)
-        
-        session.on_flushed(invoke_after_flush, once=True)
+        apply_rereference_to_data.invoke(working_data.get(), input.reference(), input.single_channel(), input.avg_channels())
+        rereferencing_task_active.set(True)        
 
     @reactive.Effect
     def _():
@@ -622,7 +604,7 @@ def server(input, output, session):
     def _():
         if workflow_busy.get():
             return
-        data = req(bad_segment_result.get())
+        req(bad_segment_result.get())
         bad_segment_review.commit_annotations("✅ Detected bad segments kept as bad.")
 
     @reactive.effect
@@ -779,17 +761,11 @@ def server(input, output, session):
     def _():
         if workflow_busy.get():
             return
-        result = ica_result.get()
-        req(result)
-        if label_ica.status() == "running":
-            ui.notification_show("ICA labelling is already running.", type="message", duration=3000)
-            return
+        result = req(ica_result.get())
         workflow_busy.set(True)
         ui.update_action_button("label_ica_components", label="Labelling...", disabled=True)
-        def invoke_after_flush():
-            label_ica.invoke(result["fit_data"], result["ica"])
-            ica_label_task_active.set(True)
-        session.on_flushed(invoke_after_flush, once=True)
+        label_ica.invoke(result["fit_data"], result["ica"])
+        ica_label_task_active.set(True)
 
     @reactive.Effect
     def _():
@@ -817,16 +793,10 @@ def server(input, output, session):
             ica_label_task_active.set(False)
             ui.update_action_button("label_ica_components", label="Label ICA", disabled=False)
             workflow_busy.set(False)
-        elif status == "running":
-            if not ica_label_task_active.get():
-                return
-            ui.update_action_button("label_ica_components", label="Labelling...", disabled=True)
-            reactive.invalidate_later(15)
 
     @render.ui
     def show_plot_ica_ui():
-        result = ica_result.get()
-        req(result)
+        result = req(ica_result.get())
         return ui.output_plot("show_plot_ica", height=f"{height_ica_plot(result['ica'])}px")
 
     @output
@@ -834,18 +804,14 @@ def server(input, output, session):
     def ica_back_ui():
         if ica_result.get() is None:
             return None
-        return ui.div(
-            ui.input_action_button("back_ica_main_panel", "Back to main panel", class_="btn-secondary"),
-            style="margin: 10px 15px 0 15px;",
-        )
+        return ui.div(ui.input_action_button("back_ica_main_panel", "Back to main panel", class_="btn-secondary"), style="margin: 10px 15px 0 15px;")
 
     @reactive.Effect
     @reactive.event(input.remove_ica_components)
     def _():
         if workflow_busy.get():
             return
-        result = ica_result.get()
-        req(result)
+        result = req(ica_result.get())
         try:
             components = parse_and_validate_components(input.ica_components_to_remove(), result["ica"].n_components_)
         except ValueError as error:
@@ -909,25 +875,18 @@ def server(input, output, session):
     def _():
         if workflow_busy.get():
             return
-        workflow_busy.set(True)
         data = req(working_data.get())
-        try:
-            topomap_requested = input.sleep_topomap_by_stage() == "yes"
-        except Exception:
-            topomap_requested = False
-        if topomap_requested and not has_montage(data):
-            ui.notification_show("Please apply a montage before displaying topomaps per sleep stage.", type="error", duration=8000)
-            return
-        if compute_sleep_staging.status() == "running":
-            ui.notification_show("Sleep staging is already running.", type="message", duration=3000)
-            return
+        workflow_busy.set(True)
         sleep_staging_result.set(None)
         ui.update_action_button("run_sleep_staging", label="Running sleep staging...", disabled=True)
         compute_sleep_staging.invoke(data, target_resample_sfreq.get(), input.sleep_eeg_channels(), input.sleep_eog_channel() if "sleep_eog_channel" in input else None, input.sleep_emg_channel() if "sleep_emg_channel" in input else None, input.sleep_metrics() if "sleep_metrics" in input else None, input.sleep_visual_channels() if "sleep_visual_channels" in input else None)
+        sleep_staging_task_active.set(True)
 
     @reactive.Effect
     def _():
         status = compute_sleep_staging.status()
+        if status in ("success", "error") and not sleep_staging_task_active.get():
+            return
         if status == "success":
             sleep_staging_result.set(compute_sleep_staging.result())
             ui.update_action_button("run_sleep_staging", label="Run sleep staging", disabled=False)
@@ -940,9 +899,7 @@ def server(input, output, session):
             except Exception as error:
                 ui.notification_show(f"Sleep staging failed: {error}", type="error", duration=8000)
             ui.update_action_button("run_sleep_staging", label="Run sleep staging", disabled=False)
-        elif status == "running":
-            ui.update_action_button("run_sleep_staging", label="Running sleep staging...", disabled=True)
-            reactive.invalidate_later(15)
+            workflow_busy.set(False)
 
     @reactive.Calc
     def selected_sleep_channel():
@@ -1119,23 +1076,15 @@ def server(input, output, session):
     def _():
         if workflow_busy.get():
             return
-        result = sleep_staging_result.get()
-        req(result)
+        result = req(sleep_staging_result.get())
         top20_table = result.get("insomnia_top20_table")
         req(top20_table is not None)
         req(not top20_table.empty)
-        if compute_insomnia_umap.status() == "running":
-            ui.notification_show("Insomnia UMAP is already being calculated.", type="message", duration=3000)
-            return
         workflow_busy.set(True)
-        insomnia_umap_task_active.set(True)
         update_active_workflow_button(ui, True, "show_insomnia_umap", "Calculating...")
         user_label = loaded_file_name.get()
-
-        def invoke_after_flush():
-            compute_insomnia_umap.invoke(top20_table, user_label)
-
-        session.on_flushed(invoke_after_flush, once=True)
+        compute_insomnia_umap.invoke(top20_table, user_label)
+        insomnia_umap_task_active.set(True)
 
     @reactive.Effect
     def _():
