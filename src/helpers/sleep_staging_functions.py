@@ -1,3 +1,4 @@
+# Import packages
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
@@ -449,7 +450,7 @@ def reduced_sleep_statistics_table(stats):
 
     rows = [
         ("Sleep onset latency", value_for("SOL"), "min"),
-        ("Sleep onset latency to 5 minutes of sleep", value_for("SOL_5MIN"), "min"),
+        ("Sleep onset latency to 5 minutes of sleep", value_for("SOL_5min"), "min"),
         ("Wake after sleep onset", value_for("WASO"), "min"),
         ("Time asleep", value_for("SE"), "%"),
         ("Wake", wake_percentage, "%"),
