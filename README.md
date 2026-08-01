@@ -55,7 +55,7 @@ python -m venv .venv
 Install dependencies:
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install -r shiny_app\requirements-freeze.txt
+python -m pip install -r requirements.txt
 ```
 
 Start the application:
