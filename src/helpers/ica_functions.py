@@ -86,7 +86,19 @@ def plot_ica(ica, ica_labels=None):
         if probs is not None and i < len(probs):
             confidence = f" ({probs[i].max() * 100:.0f}%)"
         topo_ax = fig.add_subplot(outer[row, col])
-        ica.plot_components(picks=i, axes=topo_ax, show=False)
+        try:
+            ica.plot_components(picks=i, axes=topo_ax, show=False)
+        except Exception as error:
+            topo_ax.clear()
+            topo_ax.set_xticks([])
+            topo_ax.set_yticks([])
+            message = "Cannot render topography."
+            if "cocircular" in str(error) or "cospherical" in str(error):
+                message += (
+                    "\nToo few/symmetric channel positions for\n"
+                    "triangulation (Qhull error)."
+                )
+            topo_ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=7, transform=topo_ax.transAxes)
         topo_ax.set_title(f"IC {i} - {label}{confidence}", fontsize=9, fontweight="bold")
     fig.subplots_adjust(left=0.03, right=0.99, top=0.95, bottom=0.03, wspace=0.35, hspace=0.8)
     return fig

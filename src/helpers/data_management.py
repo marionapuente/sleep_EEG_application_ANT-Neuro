@@ -273,6 +273,29 @@ def has_montage(data):
     montage = data.get_montage()
     return montage is not None and bool(getattr(montage, "ch_names", []))
 
+# Return EEG channel names that lack a valid, unique position
+def channels_missing_position(data):
+    if data is None:
+        return []
+    names, positions = [], []
+    for ch, ch_type in zip(data.info["chs"], data.get_channel_types()):
+        if ch_type != "eeg":
+            continue
+        names.append(ch["ch_name"])
+        positions.append(ch["loc"][:3])
+    if not names:
+        return []
+    positions = np.array(positions)
+    names = np.array(names)
+    nan_mask = np.any(np.isnan(positions), axis=1)
+    missing = set(names[nan_mask].tolist())
+    valid_positions = positions[~nan_mask]
+    valid_names = names[~nan_mask]
+    if len(valid_positions) > 0:
+        _, inverse, counts = np.unique(valid_positions, axis=0, return_inverse=True, return_counts=True)
+        missing.update(valid_names[counts[inverse] > 1].tolist())
+    return sorted(missing)
+
 # Export data to EDF format
 def export_data(data, resample_sfreq=None):
     if data is None:

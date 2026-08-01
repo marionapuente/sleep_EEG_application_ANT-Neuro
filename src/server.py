@@ -5,7 +5,7 @@ import os
 import zipfile
 from shiny import ui, reactive, render, req
 
-from helpers.data_management import apply_montage_selection, export_data, finish_reset, has_montage, set_and_describe_channels, status_and_load, update_active_workflow_button, update_channel_type_choices, channel_type_selection_ui
+from helpers.data_management import apply_montage_selection, channels_missing_position, export_data, finish_reset, has_montage, set_and_describe_channels, status_and_load, update_active_workflow_button, update_channel_type_choices, channel_type_selection_ui
 from helpers.time_series_display import show_ts_plot, channel_type_filters_scaling_function_ui, round_inputs, move_window, height_ts_plot, restore_filter_settings, bad_channel_window_controls
 from helpers.filtering_functions import apply_rereference, channel_type_filters_scaling_function, get_channel_groups, prepare_filtered_data
 from helpers.bad_detection_functions import BadSegmentReview, find_bad_channels, prepare_data_for_detection, annotate_bad_segments, get_bad_annotation_segments, get_bad_segment_windows, get_list_bad_segments, bad_segment_panel_ui, save_bad_segment_selection, bad_channel_criteria_table, bad_channel_handling_display, apply_bad_channel_actions, replace_bad_annotations, delete_segments_from_data, keep_bad_annotations, keep_non_bad_annotations, bad_channel_panel_content_ui
@@ -243,7 +243,15 @@ def server(input, output, session):
             return
         working_data.set(processed)
         pending_restore_filters.set(True)
-        ui.notification_show("\u2705 Montage applied.", type="message", duration=3000)
+        missing = channels_missing_position(processed)
+        if missing:
+            ui.notification_show(
+                f"\u26a0\ufe0f Montage applied, but {len(missing)} EEG channel(s) have no valid position: {', '.join(missing)}",
+                type="warning",
+                duration=10000,
+            )
+        else:
+            ui.notification_show("\u2705 Montage applied.", type="message", duration=3000)
     
     @reactive.Effect
     @reactive.event(input.rereferencing)
@@ -694,6 +702,15 @@ def server(input, output, session):
         update_active_workflow_button(ui, True, "run_ica", "Running ICA...")
         if not has_montage(data):
             ui.notification_show("Please apply a montage in the main panel before running ICA.", type="error", duration=8000)
+            update_active_workflow_button(ui, False, "run_ica")
+            workflow_busy.set(False)
+            return
+        if channels_missing_position(data):
+            ui.notification_show(
+                "All channels need correct positions before running ICA.",
+                type="error",
+                duration=8000,
+            )
             update_active_workflow_button(ui, False, "run_ica")
             workflow_busy.set(False)
             return
