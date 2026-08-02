@@ -36,7 +36,7 @@ def bad_channel_panel_content_ui():
     return ui.div(
         ui.br(),
         ui.p("Bad-channel detection uses a subset of the methods available in the PyPREP toolbox to improve computational efficiency. Additional detection methods can be enabled by modifying the code."),
-        ui.p("Interpolating bad channels requires at least 4 correctly positioned EEG channels; channels sitting low and toward the front of the head may be excluded from this check even if their coordinates are valid, so interpolation can fail even with a montage applied."),
+        ui.p("Interpolating bad channels with MNE-Python requires at least 4 correctly positioned EEG channels; channels sitting low and toward the front of the head may be excluded from this check even if their coordinates are valid."),
         ui.p(ui.strong("REFERENCE: "), "Bigdely-Shamlo, N., Mullen, T., Kothe, C., Su, K.-M., & Robbins, K. A. (2015). The PREP pipeline: standardized preprocessing for large-scale EEG analysis. Frontiers in Neuroinformatics, 9, 16. doi: 10.3389/fninf.2015.00016"),
         ui.br(),
         ui.output_text("bad_channel_list"),
