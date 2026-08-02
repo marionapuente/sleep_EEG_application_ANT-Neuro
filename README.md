@@ -5,6 +5,8 @@ Developed in collaboration with ANT Neuro (https://www.ant-neuro.com/) and built
 
 Developed as my MSc thesis at Vrije Universiteit Amsterdam within the Erasmus Mundus Joint Master’s Programme in Brain and Data Science (NeuroData).
 
+Contact marionapuentequera@gmail.com if you encounter any issues.
+
 ## Features
 - Load ANT-Neuro CNT and EDF recordings
 - Assign EEG, EOG, EMG, ECG, respiration, and other channel types
